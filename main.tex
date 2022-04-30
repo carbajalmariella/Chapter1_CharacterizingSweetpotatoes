@@ -1,14 +1,81 @@
-\documentclass{article}
-\usepackage[utf8]{inputenc}
+\documentclass{dhbenelux}
 
-\title{Chapter1_CharacterizingSweetpotatoes}
-\author{mcarbaj }
-\date{April 2022}
+\usepackage{booktabs} % for toprule, midrule, bottomrule in tables
+\usepackage{authblk} % for multiple authors and affiliations
+\usepackage{graphicx} % to inlcude graphics with \includegraphics
+
+\author[1]{Mariella Carbajal}
+\author[1]{Natalie Nelson}
+\author[2]{Anders Huseth}
+\author[3]{Gerrit Hoogenboom}
+\author[4]{Rubi Raymundo}
+
+\affil[1]{Biological and Agricultural Engineering Department, North Carolina State University, Raleigh, NC.}
+\affil[2]{Entomology and Plant Pathology Department, North Carolina State University, Raleigh, NC}
+\affil[3]{Agricultural and Biological Engineering Department, University of Florida, Gainesville, FL}
+\affil[4]{Soil and Crop Sciences Department, Colorado State University, Fort Collins, CO}
+
+\title{Towards the development of a sweetpotato simulation model: Characterizing four varieties for North Carolina}
 
 \begin{document}
 
 \maketitle
+% include copright statement on first page:
+\thispagestyle{papertitlepage} 
 
 \section{Introduction}
+
+This template is intended for articles published in the Digital Humanities in the Benelux Journal.\footnote{See \url{http://journal.dhbenelux.org}} Use this to submit the final version of your manuscript to the journal. The template will ensure your article adheres to the style guidelines of the journal. 
+
+\section{Instructions for preparing your manuscript}
+
+If you are unfamiliar with \LaTeX, there are many online resources with documentation and tutorials on how to use \LaTeX.\footnote{See \url{https://www.overleaf.com/learn/latex/Tutorials}, especially the Learn \LaTeX\ in 30 mintes: \url{https://www.overleaf.com/learn/latex/Learn_LaTeX_in_30_minutes}} 
+%
+There are specific instructions for preparing your article for the DH Benelux Journal.\footnote{See \url{http://journal.dhbenelux.org/submission/preparing-the-final-version-of-your-manuscript/}}.
+
+
+\section{Working with bibtex references}
+
+The DH Benelux Journal uses bibtex for references and citations. You can cite other work using bibtex keys \citet{maxwell2013qualitative}. Your article should end with a section called `References' that includes a link to your bibtex file that contains the bibliographic information of the work you cite (see below). Upon generating the print version with a \LaTeX\ engine, references to the cited works are included. 
+
+\section{Adding figures and tables}
+
+This section has two sub-sections.
+
+\subsection{Adding figures}
+
+\begin{figure}
+% Use center to align a figure or table to the middle of the text column
+\begin{center}
+\includegraphics[width=0.6\linewidth]{Images/Maxwell-conceptual-model.jpg}
+\end{center}
+\caption{This is where the caption of the figure goes. Remember, figure captions go below the figure.}
+\label{fig:model_maxwell}
+\end{figure}
+
+If you include figures or tables, use reference keys (e.g. Figure~\ref{fig:model_maxwell}), to create an unambiguous reference from the text to each figure and table, e.g. to Table~\ref{tab:groups}.
+
+
+\subsection{Adding tables}
+
+\begin{table}[tbp!]
+\centering
+\caption{Table caption. Captions for tables go above the table, unlike for figures.}
+\label{tab:groups}
+\begin{tabular}{| l | l | l |}
+\toprule
+ This   & is the  & header row \\
+\midrule
+ 1 & 2 & this is a cell in the first row \\
+ 3 & 4 & this is a cell in the second row \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+% The reference list will be generated automatically based on the keys 
+% you use in your article and their metadata in the bibtex file
+\bibliography{references}
 
 \end{document}
