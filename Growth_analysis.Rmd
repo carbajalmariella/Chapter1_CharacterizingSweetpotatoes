@@ -1,0 +1,224 @@
+---
+title: "Sweetpotato Growth Analysis"
+output:
+ pdf_document:
+ keep_tex: true
+---
+
+```{r global_options, include=FALSE}
+#knitr::opts_chunk$set(fig.with = 12, fig.height = 8, fig.path = 'figures/', echo = TRUE, warning = FALSE, message = FALSE)
+library(googlesheets4)
+library(dplyr)
+library(tibble)
+library("ggpubr")
+library(lme4)        # Our primary analysis routine
+library(lmerTest)    # A user friendly interface to lme4 that produces p-values
+library(emmeans)
+library(r2glmm)
+library(ggplot2)
+library(lemon)
+library(stringr)
+library(car)
+
+planting_date <-'2021-06-08'
+harvest_date <-'2021-10-01'
+```
+
+```{r functions}
+fahrenheit_to_celsius <- function(temp_F) {
+  temp_C <- (temp_F - 32) * 5 / 9
+  return(temp_C)
+}
+
+GDD <- function(tmax,tmin){
+  t_base = 16.9 #62.42 F (for total biomass)
+  t_ceiling = 29.2 #84.56F (for total biomass)
+  Tmax <- tmax
+  if (tmax > t_ceiling){
+    Tmax <- t_ceiling
+  }
+  if (tmin < 0){
+    Tmax <- t_base
+  }
+  GDD = Tmax - t_base
+  return(GDD)
+    
+}
+```
+
+* Importing weights, counts and heights of the sampled biomass components
+```{r biomass_import}
+weights <- read_sheet("https://docs.google.com/spreadsheets/d/1zYidmi7SMrktiGQ4scQ6V9Ea2xmI3GfMQWD9iOMb_IU/edit?usp=sharing",sheet='biomass_all',na="NaN")
+
+counts <- read_sheet("https://docs.google.com/spreadsheets/d/1efanenzcOrfnaCvHx2MMPASRtx_ZungbIKimgK_-63M/edit?usp=sharing",sheet="Sheet1",na="NaN","Sheet1!A1:H337")
+
+all_biomass = merge(weights, counts, by.x=c("Date","Block","Variety","Plant"), by.y=c("Date","Block","Variety","Plant"))
+
+
+all_biomass <- all_biomass %>% 
+  group_by(Date,Block,Variety) %>% 
+  mutate_if(is.numeric,function(x) ifelse(is.na(x),median(x, na.rm = TRUE),x))
+all_biomass$Variety <- gsub('Lime', 'Covington',
+           gsub('Pink', 'Bellevue',
+           gsub('White', 'Monaco', 
+          gsub('Blue','Bayou Belle', all_biomass$Variety))))
+DAT<-as.numeric(round(all_biomass$Date-as.POSIXct(planting_date)))
+all_biomass<-add_column(all_biomass, DAT, .after = 4)
+all_biomass$Block <- as.character(all_biomass$Block)
+all_biomass$Date <- as.Date(all_biomass$Date)
+#all_biomass
+```
+* Importing weather data from Kinston weather station and calculating some derived variables like GDDcum
+```{r weather_imports}
+weather <-read_sheet("https://docs.google.com/spreadsheets/d/1Nrh24GLL0wK2ujy35FxgHxf-AsFk2yAy79U-6qmCvCk/edit?usp=sharing")
+weather<-weather[,c('Date','Daily Maximum Air Temperature  (2m) (F)','Daily Minimum Air Temperature (2m) (F)','Average Photosynthetically Active Radiation (2m) (micromol/m2s)')]
+names(weather)<-c('Date','tmax','tmin','PAR')
+weather<-weather[weather$Date >= planting_date & weather$Date <= harvest_date, ]
+weather$Date<-as.Date(weather$Date,tryFormats = c("%Y-%m-%d"))
+weather[,c('tmax','tmin')] <- round(fahrenheit_to_celsius(weather[,c('tmax','tmin')]),2)
+
+weather$GDD_daily <- round(mapply(GDD,weather$tmax,weather$tmin),2)
+weather$GDD_cum <- cumsum(weather$GDD_daily)
+
+weather$PAR <- round((weather$PAR*0.0864/4.6),2)
+weather$PAR_cum <- cumsum(weather$PAR)
+#weather
+```
+* Filtering weather data at each sampling date
+```{r weather_at_sampling}
+sampling_dates <- unique(all_biomass$Date)
+weather_at_sampling <- weather %>% filter(weather$Date %in% sampling_dates)
+all_data <-merge(x=all_biomass,y=weather_at_sampling,by="Date",all.x =TRUE)
+```
+
+* Setting parameters for figures
+```{r plot_pars}
+myColors <-c('#225ea8','#f768a1','#fec44f','#bdbdbd')
+names(myColors) <- levels(all_biomass$Variety)
+custom_colors <- scale_colour_manual(values = myColors)
+
+lista <- c("Dry_below","Dry_above")
+```
+
+
+
+```{r dry_weights}
+df3=data.frame(newvar = rep(1,7),    
+               Date = as.Date(sampling_dates),
+               newvalue = c(155,178,155,800,800,800,800))
+
+ggplot(all_biomass, aes(y=Dry_below, x= Block,color=Variety)) + 
+  stat_summary(fun = "mean", geom = "line", 
+       alpha = 1,position=position_dodge(0.1)) +
+  stat_summary(fun = "mean", geom = "point",
+       size = 1.2,position=position_dodge(0.1)) +
+  stat_summary(fun.data = "mean_se",
+       geom = "errorbar",
+       width = .3,position=position_dodge(0.1))+
+  custom_colors+ theme_bw()+labs(y = "")+
+  geom_point(data=df3,aes(x=newvar,y=newvalue),colour = "white",alpha=0)+
+  facet_wrap(~as.Date(Date), nrow=3,scales="free_y")
+
+```
+
+
+```{r repeated_measurements}
+# https://bookdown.org/dereksonderegger/571/10-mixed-effects-models.html
+for (var in lista){
+  all_data0 <- all_data
+  all_data0$variable<-all_data0[[var]]
+  mix_rep <- lmer(variable ~ Variety +GDD_cum + (1| Block), data=all_data0)
+  summary(mix_rep)
+  print(anova(mix_rep))
+  print(ranova(mix_rep))
+  r2_rep = r2beta(mix_rep, method = 'kr', partial = T)
+  print(r2_rep)
+  LetterGroups <- emmeans::emmeans(mix_rep, pairwise~ Variety) %>%
+        multcomp::cld(Letters=letters)
+  print(LetterGroups)
+}
+
+```  
+
+```{r individual_sampling}
+for (var in lista){
+  all_biomass0 <- all_biomass
+  all_biomass0$variable<-all_biomass0[[var]]
+  LetterResults_all <- NULL
+  for (i in 1:7){
+    sub_data <- all_biomass0[all_biomass0$Date==sampling_dates[i],]
+    mixed_var <- lmer(variable ~ Variety + (1|Block), data=sub_data)
+    print(Anova(mixed_var,type=c("III")))
+    print(ranova(mixed_var))
+    #Anova(mixed_var, type=c("III"))
+    #r.squaredGLMM(mixed_var)
+    r2_sp = r2beta(mixed_var, method = 'kr', partial = T)
+    print(r2_sp)
+    LetterResults0 <- emmeans::emmeans(mixed_var, pairwise~ Variety) %>%
+      multcomp::cld(Letters=letters)
+    if (i<4){
+      hh <--10
+    } else{
+      hh<--10
+    }
+    
+    LetterResults <- LetterResults0 %>% 
+      mutate(Date = sampling_dates[i], LetterHeight=hh,  .group = str_trim(.group))
+    LetterResults_all <- rbind(LetterResults_all, LetterResults)
+  }
+  
+  all_biomass00 <- all_biomass0 %>%
+    mutate(Variety = fct_reorder(Variety, variable))
+  gg <- ggplot(all_biomass00, aes(y=variable, x= Variety,color=Block)) + 
+    facet_wrap(~as.Date(Date), nrow=3,scales="free_y")+
+    stat_summary(fun = "mean", geom = "point",
+         size = 1.5,position=position_dodge(0.1)) +
+    theme_bw()+labs(y = paste(gsub("_", " ", var),"(gr.)"),x="")+
+    geom_text(data=LetterResults_all, aes(label=.group, x= Variety,y=LetterHeight),inherit.aes = FALSE)+
+    scale_color_brewer(palette = "Set1")
+  ggp <- reposition_legend(gg, 'top', panel=c('panel-3-2','panel-3-3'))
+  print(ggp)
+  
+}
+
+```
+* Setting parameters for plotting
+```{r temporal_plots}
+all_biomass_mean <- all_biomass %>% group_by(Date,Variety) %>% 
+  summarize_if(is.numeric, mean)
+all_biomass_se <- all_biomass %>% group_by(Date,Variety) %>% 
+  summarize_if(is.numeric, sd)
+all_biomass_se[,5:ncol(all_biomass_se)] <- all_biomass_se[,5:ncol(all_biomass_se)]/sqrt(12)
+
+all_mean <- merge(x=all_biomass_mean,y=weather_at_sampling,by="Date",all.x =TRUE)
+all_se <- merge(x=all_biomass_se,y=weather_at_sampling,by="Date",all.x =TRUE)
+
+
+var0="Dry_below"
+for (var0 in lista){
+  var_mean <- all_mean[,c("GDD_cum","Variety",var0)]
+  var_se <- all_se[,c("GDD_cum","Variety",var0)]
+  df <-merge(x=var_mean,y=var_se,by=c("GDD_cum","Variety"),all.x=TRUE)
+  names(df)<-c("GDD_cum","Variety","var_mean","var_se")
+    
+  ggr <- ggplot(df,aes(x=GDD_cum, y= var_mean,color=Variety))+geom_line(size = 0.8)+geom_point(size = 2)+
+    geom_errorbar(aes(x=GDD_cum, ymin = var_mean-var_se,ymax =var_mean+var_se),size = .4,width=7)+custom_colors+theme_bw()+theme(legend.text=element_text(size=12),legend.position="bottom")+xlab('Accumulated Growing Degree Days (Celsius-based)')+ylab(gsub("_", " ", var0))+scale_x_continuous(breaks = round(unique(df$GDD_cum)))
+  print(ggr)
+}
+```
+
+```{r repeated_measurements}
+all_biomass_pred <- all_biomass %>% 
+  mutate(yhat = predict(mix_rep2, re.form=~(1+GDD_cum|Block)))
+ggplot(all_biomass_pred, aes(y=Dry_below, x=GDD_cum)) +
+    facet_wrap(~ Block, ncol=6) + 
+    geom_point() + 
+    geom_line() +
+    geom_line(aes(y=yhat), color='red')
+
+```
+
+```{r imports}
+
+
+```
