@@ -1,12 +1,15 @@
 ---
 title: "Sweetpotato Growth Analysis"
 output:
- pdf_document:
- keep_tex: true
+  html_document:
+    df_print: paged
+  keep_tex: yes
+  pdf_document: null
 ---
 
-```{r global_options, include=FALSE}
-#knitr::opts_chunk$set(fig.with = 12, fig.height = 8, fig.path = 'figures/', echo = TRUE, warning = FALSE, message = FALSE)
+```{r global_options, message=FALSE, warning=FALSE, include=FALSE}
+knitr::opts_chunk$set(out.width = "100%", fig.height = 7, fig.path = 'figures/', echo = TRUE, warning = FALSE, message = FALSE)
+#fig.with = 25, fig.height = 7
 library(googlesheets4)
 library(dplyr)
 library(tibble)
@@ -19,6 +22,8 @@ library(ggplot2)
 library(lemon)
 library(stringr)
 library(car)
+library(forcats)
+library(ggrepel)
 
 planting_date <-'2021-06-08'
 harvest_date <-'2021-10-01'
@@ -67,7 +72,24 @@ all_biomass<-add_column(all_biomass, DAT, .after = 4)
 all_biomass$Block <- as.character(all_biomass$Block)
 all_biomass$Date <- as.Date(all_biomass$Date)
 #all_biomass
+
 ```
+
+```{r derived_vars}
+all_biomass$Water_content_below<- (all_biomass$Fresh_below-all_biomass$Dry_below)/all_biomass$Dry_below
+
+all_biomass$Water_content_above<- (all_biomass$Fresh_above-all_biomass$Dry_above)/all_biomass$Dry_above
+
+all_biomass$Root_Shoot_ratio<- all_biomass$Dry_below/all_biomass$Dry_above
+
+var_biom <- names(all_biomass)[6:length(names(all_biomass))]
+```
+
+```{r all_biomass_summary}
+# all_biomass_x <- all_biomass[,c(1,2,3,6:ncol(all_biomass))] %>% group_by(Date,Variety,Block) %>% summarize_if(is.numeric, sum)
+ngr<-12
+```
+
 * Importing weather data from Kinston weather station and calculating some derived variables like GDDcum
 ```{r weather_imports}
 weather <-read_sheet("https://docs.google.com/spreadsheets/d/1Nrh24GLL0wK2ujy35FxgHxf-AsFk2yAy79U-6qmCvCk/edit?usp=sharing")
@@ -97,128 +119,153 @@ myColors <-c('#225ea8','#f768a1','#fec44f','#bdbdbd')
 names(myColors) <- levels(all_biomass$Variety)
 custom_colors <- scale_colour_manual(values = myColors)
 
-lista <- c("Dry_below","Dry_above")
+print("List of variables to analyze")
+lista <- var_biom
+print(lista)
 ```
 
 
+* Inspecting plants variability per block and variety
+```{r comparison_all}
+# df3=data.frame(newvar = rep(1,7),    
+#                Date = as.Date(sampling_dates),
+#                newvalue = c(155,178,155,800,800,800,800))
 
-```{r dry_weights}
-df3=data.frame(newvar = rep(1,7),    
-               Date = as.Date(sampling_dates),
-               newvalue = c(155,178,155,800,800,800,800))
-
-ggplot(all_biomass, aes(y=Dry_below, x= Block,color=Variety)) + 
-  stat_summary(fun = "mean", geom = "line", 
-       alpha = 1,position=position_dodge(0.1)) +
-  stat_summary(fun = "mean", geom = "point",
-       size = 1.2,position=position_dodge(0.1)) +
-  stat_summary(fun.data = "mean_se",
-       geom = "errorbar",
-       width = .3,position=position_dodge(0.1))+
-  custom_colors+ theme_bw()+labs(y = "")+
-  geom_point(data=df3,aes(x=newvar,y=newvalue),colour = "white",alpha=0)+
-  facet_wrap(~as.Date(Date), nrow=3,scales="free_y")
+for (var in lista){
+  print(paste("Variable: ",var))
+  all_biomass0 <- all_biomass
+  all_biomass0$variable<-all_biomass0[[var]]
+  gpp0<-ggplot(all_biomass0, aes(y=variable, x= Block,color=Variety)) + 
+    stat_summary(fun = "mean", geom = "line", 
+         alpha = 1,position=position_dodge(0.1)) +
+    stat_summary(fun = "mean", geom = "point",
+         size = 1.2,position=position_dodge(0.1)) +
+    stat_summary(fun.data = "mean_se",
+         geom = "errorbar",
+         width = .3,position=position_dodge(0.1))+
+    custom_colors+ theme_bw()+labs(y = "")+
+    #geom_point(data=df3,aes(x=newvar,y=newvalue),colour = "white",alpha=0)+
+    facet_wrap(~as.Date(Date), nrow=3,scales="free_y")+labs(y = var)
+  gpp<-reposition_legend(gpp0, 'top', panel=c('panel-3-2','panel-3-3'))
+}
 
 ```
 
-
+* Repeated linear mixed model
 ```{r repeated_measurements}
 # https://bookdown.org/dereksonderegger/571/10-mixed-effects-models.html
+pairwise_rep <- data.frame(Variety=c("Bayou Belle","Bellevue","Covington","Monaco"))
 for (var in lista){
+  print(paste("Variable:",var))
   all_data0 <- all_data
   all_data0$variable<-all_data0[[var]]
-  mix_rep <- lmer(variable ~ Variety +GDD_cum + (1| Block), data=all_data0)
+  mix_rep <- lmer(variable ~ Variety+GDD_cum + (1| Block), data=all_data0)
+  print("Model summary")  
   summary(mix_rep)
+  print("ANOVA")
   print(anova(mix_rep))
+  print("Random effects")
   print(ranova(mix_rep))
   r2_rep = r2beta(mix_rep, method = 'kr', partial = T)
   print(r2_rep)
   LetterGroups <- emmeans::emmeans(mix_rep, pairwise~ Variety) %>%
         multcomp::cld(Letters=letters)
-  print(LetterGroups)
+  LetterGroups<-LetterGroups[order(LetterGroups$Variety),]
+  pairs<-LetterGroups[,c("Variety",".group")]
+  pairwise_rep<-merge(pairwise_rep,pairs,by="Variety")
 }
+names(pairwise_rep)<-c("Variety",lista)
+print("All pairwise comparisons")
+print(pairwise_rep)
 
 ```  
 
+* Mixel linear modeling and pairwise comparison every sampling date
 ```{r individual_sampling}
+pairwise_all <- weather_at_sampling[,c("Date","GDD_cum")][rep(1:7, 4),]
+pairwise_all <- pairwise_all[order(pairwise_all$Date),]
+pairwise_all$Variety<-rep(unique(all_biomass$Variety),7)
+print("Mixel Linear Model and Pairwise comparison")
 for (var in lista){
+  print(paste("Variable: ",var))
   all_biomass0 <- all_biomass
   all_biomass0$variable<-all_biomass0[[var]]
   LetterResults_all <- NULL
   for (i in 1:7){
     sub_data <- all_biomass0[all_biomass0$Date==sampling_dates[i],]
-    mixed_var <- lmer(variable ~ Variety + (1|Block), data=sub_data)
-    print(Anova(mixed_var,type=c("III")))
-    print(ranova(mixed_var))
-    #Anova(mixed_var, type=c("III"))
-    #r.squaredGLMM(mixed_var)
-    r2_sp = r2beta(mixed_var, method = 'kr', partial = T)
-    print(r2_sp)
-    LetterResults0 <- emmeans::emmeans(mixed_var, pairwise~ Variety) %>%
-      multcomp::cld(Letters=letters)
-    if (i<4){
-      hh <--10
-    } else{
-      hh<--10
+    nan_count <- sum(is.na(sub_data$variable))
+    if (nan_count < 4){
+      mixed_var <- lmer(variable ~ Variety + (1|Block), data=sub_data)
+      print(Anova(mixed_var,type=c("III")))
+      print(ranova(mixed_var))
+      r2_sp = r2beta(mixed_var, method = 'kr', partial = T)
+      print(r2_sp)
+      LetterResults0 <- emmeans::emmeans(mixed_var, pairwise~ Variety) %>%
+        multcomp::cld(Letters=letters)
+  
+      LetterResults <- LetterResults0 %>% 
+        mutate(Date = sampling_dates[i], LetterHeight=-10,  .group = str_trim(.group))
+      LetterResults_all <- rbind(LetterResults_all, LetterResults[,c("Date","Variety",".group")])
     }
-    
-    LetterResults <- LetterResults0 %>% 
-      mutate(Date = sampling_dates[i], LetterHeight=hh,  .group = str_trim(.group))
-    LetterResults_all <- rbind(LetterResults_all, LetterResults)
   }
   
+  pairwise_all<-merge(pairwise_all,LetterResults_all,by=c("Date","Variety"),all.x=TRUE)
+
   all_biomass00 <- all_biomass0 %>%
     mutate(Variety = fct_reorder(Variety, variable))
   gg <- ggplot(all_biomass00, aes(y=variable, x= Variety,color=Block)) + 
     facet_wrap(~as.Date(Date), nrow=3,scales="free_y")+
     stat_summary(fun = "mean", geom = "point",
          size = 1.5,position=position_dodge(0.1)) +
-    theme_bw()+labs(y = paste(gsub("_", " ", var),"(gr.)"),x="")+
-    geom_text(data=LetterResults_all, aes(label=.group, x= Variety,y=LetterHeight),inherit.aes = FALSE)+
-    scale_color_brewer(palette = "Set1")
+    theme_bw()+labs(y = gsub("_", " ", var),x="")+
+    geom_text(data=LetterResults_all, aes(label=.group, x= Variety,y=-10),inherit.aes = FALSE)+
+    scale_color_brewer(palette = "Set1")+labs(y = var)
   ggp <- reposition_legend(gg, 'top', panel=c('panel-3-2','panel-3-3'))
-  print(ggp)
+  ggp
   
 }
+names(pairwise_all)<-c("Date","Variety","GDD_cum",lista)
 
 ```
-* Setting parameters for plotting
+* Temporal figures and pairwise letters for all growing variables
 ```{r temporal_plots}
 all_biomass_mean <- all_biomass %>% group_by(Date,Variety) %>% 
   summarize_if(is.numeric, mean)
 all_biomass_se <- all_biomass %>% group_by(Date,Variety) %>% 
   summarize_if(is.numeric, sd)
-all_biomass_se[,5:ncol(all_biomass_se)] <- all_biomass_se[,5:ncol(all_biomass_se)]/sqrt(12)
+all_biomass_se[,5:ncol(all_biomass_se)] <- all_biomass_se[,5:ncol(all_biomass_se)]/sqrt(ngr)
 
 all_mean <- merge(x=all_biomass_mean,y=weather_at_sampling,by="Date",all.x =TRUE)
 all_se <- merge(x=all_biomass_se,y=weather_at_sampling,by="Date",all.x =TRUE)
 
 
-var0="Dry_below"
 for (var0 in lista){
+  print(var0)
   var_mean <- all_mean[,c("GDD_cum","Variety",var0)]
   var_se <- all_se[,c("GDD_cum","Variety",var0)]
   df <-merge(x=var_mean,y=var_se,by=c("GDD_cum","Variety"),all.x=TRUE)
   names(df)<-c("GDD_cum","Variety","var_mean","var_se")
+  text_pos <-round(max(df$var_mean+df$var_se,na.rm = TRUE))
+
+  pairs<-pairwise_all[,c("GDD_cum","Variety",var0)]
+  df = merge(df,pairs,by=c("GDD_cum","Variety"),all.x=TRUE)
+  df$txt <- rep(rep(text_pos,4)+c(0,1,0,1),7)
+  names(df)<-c("GDD_cum","Variety","var_mean","var_se","vv","txt")
     
-  ggr <- ggplot(df,aes(x=GDD_cum, y= var_mean,color=Variety))+geom_line(size = 0.8)+geom_point(size = 2)+
-    geom_errorbar(aes(x=GDD_cum, ymin = var_mean-var_se,ymax =var_mean+var_se),size = .4,width=7)+custom_colors+theme_bw()+theme(legend.text=element_text(size=12),legend.position="bottom")+xlab('Accumulated Growing Degree Days (Celsius-based)')+ylab(gsub("_", " ", var0))+scale_x_continuous(breaks = round(unique(df$GDD_cum)))
+  ggr <- ggplot(df,aes(x=GDD_cum, y= var_mean,color=Variety,label=vv))+geom_line(size = 0.8)+geom_point(size = 2)+
+    geom_errorbar(aes(x=GDD_cum, ymin = var_mean-var_se,ymax =var_mean+var_se),size = .4,width=7)+custom_colors+theme_bw()+theme(legend.text=element_text(size=12),legend.position="bottom")+xlab('Accumulated Growing Degree Days (Celsius-based)')+ylab(gsub("_", " ", var0))+scale_x_continuous(breaks = round(unique(df$GDD_cum)))+ geom_text_repel(aes(y=txt),segment.color = NA,size = 4,box.padding=0.05,show.legend = FALSE)
   print(ggr)
 }
-```
-
-```{r repeated_measurements}
-all_biomass_pred <- all_biomass %>% 
-  mutate(yhat = predict(mix_rep2, re.form=~(1+GDD_cum|Block)))
-ggplot(all_biomass_pred, aes(y=Dry_below, x=GDD_cum)) +
-    facet_wrap(~ Block, ncol=6) + 
-    geom_point() + 
-    geom_line() +
-    geom_line(aes(y=yhat), color='red')
 
 ```
 
-```{r imports}
+```{r}
+
+
+
+```
+
+```{r}
 
 
 ```
